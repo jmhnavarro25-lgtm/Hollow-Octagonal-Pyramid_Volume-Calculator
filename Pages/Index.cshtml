@@ -1,0 +1,192 @@
+﻿@page
+@model HOLLOW_OCTAGONAL_PYRAMID_CALCULATOR.Pages.IndexModel
+@{
+    ViewData["Title"] = "Hollow Octagonal Pyramid";
+}
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<style>
+    body { background-color: #0f0f0f; color: #ffffff; font-family: 'Segoe UI', sans-serif; overflow-x: hidden; }
+    .app-container {
+        background-color: #1a1a1a;
+        border-radius: 15px;
+        padding: 25px;
+        margin: 20px auto;
+        max-width: 950px;
+        border: 1px solid #333;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+    }
+    .header-area { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .title { color: #ffc107; font-weight: bold; margin: 0; }
+    .stats-group { display: flex; gap: 20px; }
+    .stat-item { text-align: right; }
+    .stat-label { font-size: 10px; color: #888; text-transform: uppercase; }
+    .stat-value { font-family: 'Consolas', monospace; color: #4dabf7; font-size: 1.1rem; font-weight: bold; }
+    
+    #rendererContainer {
+        width: 100%;
+        height: 400px;
+        background: #000;
+        border-radius: 10px;
+        border: 1px solid #444;
+        cursor: move;
+    }
+
+    .controls { margin-top: 20px; }
+    .input-row { display: flex; align-items: center; margin-bottom: 12px; gap: 15px; }
+    .input-row label { width: 140px; font-size: 0.85rem; color: #bbb; }
+    .slider-custom { flex-grow: 1; cursor: pointer; }
+    .val-box { width: 65px; background: #2a2a2a; border: 1px solid #444; color: #fff; text-align: center; border-radius: 5px; }
+    
+    .update-btn {
+        width: 100%; background-color: #4dabf7; color: #000; font-weight: bold;
+        border: none; padding: 12px; border-radius: 8px; transition: 0.3s; margin-top: 10px;
+    }
+    .update-btn:hover { background-color: #63b5f8; }
+</style>
+
+<div class="app-container">
+    <div class="header-area">
+        <h4 class="title">Interactive Hollow Octagonal Pyramid</h4>
+        <div class="stats-group">
+            <div class="stat-item">
+                <div class="stat-label">Outer Vol</div>
+                <div class="stat-value" id="dispOuter">@Model.OuterVol.ToString("N1")</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Inner Vol</div>
+                <div class="stat-value" id="dispInner">@Model.InnerVol.ToString("N1")</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Hollow Space</div>
+                <div class="stat-value" id="dispHollow" style="color: #fff;">@Model.TotalVolume.ToString("N1")</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="rendererContainer"></div>
+
+    <form method="post" class="controls">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="input-row">
+                    <label>Outer Edge (a₁)</label>
+                    <input type="range" class="slider-custom" min="1" max="50" value="@Model.OuterEdge" id="slideA1" oninput="updateAll()">
+                    <input type="number" step="any" asp-for="OuterEdge" id="outEdgeNum" class="val-box">
+                </div>
+                <div class="input-row">
+                    <label>Inner Edge (a₂)</label>
+                    <input type="range" class="slider-custom" min="1" max="50" value="@Model.InnerEdge" id="slideA2" oninput="updateAll()">
+                    <input type="number" step="any" asp-for="InnerEdge" id="inEdgeNum" class="val-box">
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="input-row">
+                    <label>Outer Height (H₁)</label>
+                    <input type="range" class="slider-custom" min="1" max="50" value="@Model.OuterHeight" id="slideH1" oninput="updateAll()">
+                    <input type="number" step="any" asp-for="OuterHeight" id="outHNum" class="val-box">
+                </div>
+                <div class="input-row">
+                    <label>Inner Height (H₂)</label>
+                    <input type="range" class="slider-custom" min="1" max="50" value="@Model.InnerHeight" id="slideH2" oninput="updateAll()">
+                    <input type="number" step="any" asp-for="InnerHeight" id="inHNum" class="val-box">
+                </div>
+            </div>
+        </div>
+        <button type="submit" class="update-btn">CALCULATE</button>
+    </form>
+</div>
+
+<script>
+    // --- THREE.JS 3D LOGIC ---
+    let scene, camera, renderer, outerPyramid, innerPyramid;
+    const container = document.getElementById('rendererContainer');
+
+    function init3D() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        container.appendChild(renderer.domElement);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const pointLight = new THREE.PointLight(0x4dabf7, 1);
+        pointLight.position.set(20, 30, 20);
+        scene.add(pointLight);
+
+        // Floor Grid
+        const grid = new THREE.GridHelper(100, 20, 0x333333, 0x222222);
+        grid.position.y = -1;
+        scene.add(grid);
+
+        camera.position.set(40, 30, 40);
+        camera.lookAt(0, 5, 0);
+
+        updatePyramids();
+        animate();
+    }
+
+    function createOctagonalPyramid(radius, height, color, wireframe, opacity) {
+        // Radius of circumcircle of octagon given side 'a' is: a / (2 * sin(180/8))
+        const r = radius / (2 * Math.sin(Math.PI / 8));
+        const geometry = new THREE.ConeGeometry(r, height, 8);
+        const material = new THREE.MeshPhongMaterial({ 
+            color: color, 
+            wireframe: wireframe, 
+            transparent: true, 
+            opacity: opacity,
+            flatShading: true
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.y = height / 2;
+        return mesh;
+    }
+
+    function updatePyramids() {
+        if (outerPyramid) scene.remove(outerPyramid);
+        if (innerPyramid) scene.remove(innerPyramid);
+
+        const a1 = parseFloat(document.getElementById('slideA1').value);
+        const h1 = parseFloat(document.getElementById('slideH1').value);
+        const a2 = parseFloat(document.getElementById('slideA2').value);
+        const h2 = parseFloat(document.getElementById('slideH2').value);
+
+        outerPyramid = createOctagonalPyramid(a1, h1, 0x4dabf7, true, 0.5);
+        innerPyramid = createOctagonalPyramid(a2, h2, 0xffffff, false, 0.8);
+
+        scene.add(outerPyramid);
+        scene.add(innerPyramid);
+    }
+
+    function updateAll() {
+        // Sync sliders to number boxes
+        document.getElementById('outEdgeNum').value = document.getElementById('slideA1').value;
+        document.getElementById('inEdgeNum').value = document.getElementById('slideA2').value;
+        document.getElementById('outHNum').value = document.getElementById('slideH1').value;
+        document.getElementById('inHNum').value = document.getElementById('slideH2').value;
+
+        // Update 3D
+        updatePyramids();
+
+        // Real-time Math Display
+        const mult = 2 * (1 + Math.sqrt(2));
+        const vOut = (1/3) * (mult * Math.pow(document.getElementById('slideA1').value, 2)) * document.getElementById('slideH1').value;
+        const vIn = (1/3) * (mult * Math.pow(document.getElementById('slideA2').value, 2)) * document.getElementById('slideH2').value;
+        
+        document.getElementById('dispOuter').innerText = vOut.toLocaleString(undefined, {maximumFractionDigits: 1});
+        document.getElementById('dispInner').innerText = vIn.toLocaleString(undefined, {maximumFractionDigits: 1});
+        document.getElementById('dispHollow').innerText = Math.max(0, vOut - vIn).toLocaleString(undefined, {maximumFractionDigits: 1});
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if(outerPyramid) outerPyramid.rotation.y += 0.005;
+        if(innerPyramid) innerPyramid.rotation.y += 0.005;
+        renderer.render(scene, camera);
+    }
+
+    window.onload = init3D;
+</script>
